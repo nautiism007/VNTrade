@@ -39,18 +39,31 @@ def compute_sma(df: pd.DataFrame, period: int) -> pd.Series:
     return df["mid_price"].rolling(period).mean()
 
 
-def assign_volume_clusters(df: pd.DataFrame, n_clusters: int = 3) -> pd.Series:
+def assign_volume_clusters(df: pd.DataFrame, n_clusters: int = 3, window: int = 1000) -> pd.Series:
     """
-    Assign discrete volume regimes based on quantiles.
+    Assign discrete volume regimes based on rolling quantiles (to avoid look-ahead bias).
     0 = low, 1 = medium, 2 = high
     """
     if "volume" not in df.columns:
         return pd.Series(1, index=df.index)  # neutral if no volume
-    try:
-        return pd.qcut(df["volume"], q=n_clusters, labels=False, duplicates="drop")
-    except ValueError:
-        # fallback in case of insufficient data variation
-        return pd.Series(1, index=df.index)
+
+    vol_clusters = pd.Series(index=df.index, dtype=float)
+    vol = df["volume"]
+
+    for i in range(window, len(df)):
+        past_vol = vol.iloc[i - window:i].dropna()
+        if len(past_vol) < 10:
+            vol_clusters.iloc[i] = 1  # default medium if not enough history
+            continue
+        try:
+            cluster = pd.qcut(past_vol, q=n_clusters, labels=False, duplicates="drop")
+            vol_clusters.iloc[i] = cluster.iloc[-1]
+        except Exception:
+            vol_clusters.iloc[i] = 1  # fallback medium
+
+    vol_clusters = vol_clusters.fillna(1)
+    return vol_clusters
+
 
 
 def detect_cross_signals(price: pd.Series, sma: pd.Series) -> pd.Series:
