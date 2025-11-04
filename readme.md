@@ -2,7 +2,9 @@
 
 Simple Python script for backtesting a Simple Moving Average (SMA) crossover strategy on 1-minute BTC data.  
 Buys when price crosses above the SMA and sells when it crosses below.  
-Now includes **volume clustering heuristics** — trades are only executed during medium or high-volume regimes to reduce false signals in low-liquidity periods.  
+Now includes a volume-based regime filter with rolling quantile clustering (no look-ahead bias).
+Trades are only executed during medium or high-volume regimes, using a 1000-bar historical window
+to identify relative volume clusters dynamically.
 
 Tracks key metrics: total return, number of trades, max drawdown, and Sharpe ratio.  
 Supports multiple SMA periods and optional transaction costs per trade.  
