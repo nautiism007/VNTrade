@@ -15,5 +15,3 @@ Input CSV must include:
 - `mid_price`: mid price at each minute  
 - `volume` *(optional)*: used for volume clustering, if available  
 
-### Usage
-Edit file paths and SMA settings in the script, then run:
