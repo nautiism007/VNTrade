@@ -71,6 +71,7 @@ def backtest_strategy(df: pd.DataFrame, sma_period: int,
     sma = compute_sma(df, sma_period)
     signals = detect_cross_signals(df["mid_price"], sma)
     raw_positions = generate_position_from_signals(signals)
+    # Note: signals are executed on the next bar (no lookahead).
     position = raw_positions.shift(1).fillna(0).astype(int)
     strat_ret = position * returns
     strat_ret = strat_ret.fillna(0.0)
@@ -78,17 +79,18 @@ def backtest_strategy(df: pd.DataFrame, sma_period: int,
 
     # Transaction costs
     trades_mask = raw_positions != raw_positions.shift(1)
-    trades_mask = trades_mask & (raw_positions != 0)
     trade_indices = trades_mask[trades_mask].index
     if tx_cost > 0 and len(trade_indices) > 0:
         cost_series = pd.Series(0.0, index=equity.index)
-        cost_per_trade = initial_capital * tx_cost
         for t in trade_indices:
-            cost_series.loc[t:] -= cost_per_trade
-        equity += cost_series
+            # charge cost proportional to equity at the trade timestamp
+            cost_at_t = equity.loc[t] * tx_cost
+            cost_series.loc[t:] -= cost_at_t
+        equity = equity + cost_series
 
     total_return = (equity.iloc[-1] / initial_capital - 1) * 100
-    num_trades = len(trade_indices)
+    # Count every executed order (every change in raw_positions)
+    num_trades = int((raw_positions != raw_positions.shift(1)).sum())
     drawdown = equity / equity.cummax() - 1
     max_drawdown = drawdown.min() * 100
     sharpe = (strat_ret.mean() / strat_ret.std()) * np.sqrt(365*24*60) if strat_ret.std() != 0 else np.nan
