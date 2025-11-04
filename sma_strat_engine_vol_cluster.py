@@ -39,6 +39,20 @@ def compute_sma(df: pd.DataFrame, period: int) -> pd.Series:
     return df["mid_price"].rolling(period).mean()
 
 
+def assign_volume_clusters(df: pd.DataFrame, n_clusters: int = 3) -> pd.Series:
+    """
+    Assign discrete volume regimes based on quantiles.
+    0 = low, 1 = medium, 2 = high
+    """
+    if "volume" not in df.columns:
+        return pd.Series(1, index=df.index)  # neutral if no volume
+    try:
+        return pd.qcut(df["volume"], q=n_clusters, labels=False, duplicates="drop")
+    except ValueError:
+        # fallback in case of insufficient data variation
+        return pd.Series(1, index=df.index)
+
+
 def detect_cross_signals(price: pd.Series, sma: pd.Series) -> pd.Series:
     """Detect SMA crossover signals"""
     prev_price = price.shift(1)
@@ -69,7 +83,11 @@ def backtest_strategy(df: pd.DataFrame, sma_period: int,
     df = df.copy().sort_index()
     returns = compute_returns(df)
     sma = compute_sma(df, sma_period)
+    # Volume clustering
+    df["vol_cluster"] = assign_volume_clusters(df)
     signals = detect_cross_signals(df["mid_price"], sma)
+    # Filter signals: only act in medium/high-volume regimes
+    signals[df["vol_cluster"] < 1] = 0
     raw_positions = generate_position_from_signals(signals)
 
     # Note: signals are executed on the next bar (no lookahead).
@@ -146,6 +164,9 @@ def summarise_result(res: Dict) -> None:
     print(f"Number of trades: {res['num_trades']}")
     print(f"Max drawdown: {res['max_drawdown_pct']:.2f}%")
     print(f"Sharpe ratio: {res['sharpe']:.3f}")
+    if "vol_cluster" in df.columns:
+        print("Volume-aware filter active: low-volume signals suppressed.")
+
 
 
 # -------------------------
