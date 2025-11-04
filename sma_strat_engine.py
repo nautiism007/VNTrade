@@ -71,28 +71,43 @@ def backtest_strategy(df: pd.DataFrame, sma_period: int,
     sma = compute_sma(df, sma_period)
     signals = detect_cross_signals(df["mid_price"], sma)
     raw_positions = generate_position_from_signals(signals)
+
     # Note: signals are executed on the next bar (no lookahead).
     position = raw_positions.shift(1).fillna(0).astype(int)
     strat_ret = position * returns
     strat_ret = strat_ret.fillna(0.0)
     equity = initial_capital * (1.0 + strat_ret.cumsum())
 
-    # Transaction costs
+    # Transaction costs — charged at execution (next bar) proportional to trade notional
     trades_mask = raw_positions != raw_positions.shift(1)
     trade_indices = trades_mask[trades_mask].index
+
     if tx_cost > 0 and len(trade_indices) > 0:
         cost_series = pd.Series(0.0, index=equity.index)
+        # shift trade times forward by one bar to align with execution
+        trade_exec_indices = []
+        idx_list = equity.index.to_list()
         for t in trade_indices:
-            # charge cost proportional to equity at the trade timestamp
-            cost_at_t = equity.loc[t] * tx_cost
-            cost_series.loc[t:] -= cost_at_t
+            try:
+                next_idx = idx_list[idx_list.index(t) + 1]
+                trade_exec_indices.append(next_idx)
+            except (ValueError, IndexError):
+                continue  # skip last signal with no next bar
+
+        for exec_t in trade_exec_indices:
+            cost_at_exec = equity.loc[exec_t] * tx_cost
+            cost_series.loc[exec_t:] -= cost_at_exec
         equity = equity + cost_series
 
     total_return = (equity.iloc[-1] / initial_capital - 1) * 100
+
     # Count every executed order (every change in raw_positions)
     num_trades = int((raw_positions != raw_positions.shift(1)).sum())
+
     drawdown = equity / equity.cummax() - 1
     max_drawdown = drawdown.min() * 100
+
+    # Annualization assumes 1-min data 24/7 crypto
     sharpe = (strat_ret.mean() / strat_ret.std()) * np.sqrt(365*24*60) if strat_ret.std() != 0 else np.nan
 
     return {
@@ -153,24 +168,22 @@ def load_data(path: str) -> pd.DataFrame:
     # Clean timestamp values (strip possible trailing T or Z)
     df["timestamp"] = df["timestamp"].astype(str).str.replace("T", "", regex=False).str.replace("Z", "", regex=False)
 
-    # Detect milliseconds vs seconds
-    try:
-        # try parsing as integers
-        ts = pd.to_numeric(df["timestamp"], errors="coerce")
-        if ts.dropna().astype(int).astype(str).str.len().median() > 11:
-            # likely milliseconds
-            df["timestamp"] = pd.to_datetime(ts, unit="ms", utc=True)
-        else:
-            df["timestamp"] = pd.to_datetime(ts, unit="s", utc=True)
-    except Exception:
-        # fallback: generic parser for string datetimes
+    # Robust timestamp parsing
+    ts = pd.to_numeric(df["timestamp"], errors="coerce")
+    numeric_mask = ts.notna()
+
+    if numeric_mask.mean() > 0.9:
+        # mostly numeric
+        unit = "ms" if ts.dropna().astype(str).str.len().median() > 11 else "s"
+        df["timestamp"] = pd.to_datetime(ts, unit=unit, utc=True)
+    else:
+        # parse as datetime strings
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
 
     # Drop rows that couldn't be parsed
     df = df.dropna(subset=["timestamp"])
     df = df.set_index("timestamp").sort_index()
     return df
-
 
 
 # -------------------------
